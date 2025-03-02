@@ -54,7 +54,7 @@ LEFT_HANDS = ['l-01.webp', 'l-02.webp', 'l-03.webp', 'l-04.webp', 'l-05.webp']
 RIGHT_HANDS = ['r-01.webp', 'r-02.webp', 'r-03.webp', 'r-04.webp', 'r-05.webp']
 
 def detect_red_dot(image_path):
-    """Detect the center of the red dot in overlay images"""
+    """Detect the center of the red dot in overlay images and remove it completely"""
     img = Image.open(image_path).convert('RGBA')
     img_array = np.array(img)
     
@@ -65,20 +65,25 @@ def detect_red_dot(image_path):
         (img_array[:, :, 2] < 30)     # Low blue
     )
     
+    # Create a copy without the red dot
+    img_no_dot = img.copy()
+    
     if len(red_pixels[0]) > 0:
         # Find center of the red dot
         y_center = int(np.mean(red_pixels[0]))
         x_center = int(np.mean(red_pixels[1]))
         
-        # Create a copy without the red dot
-        img_no_dot = img.copy()
-        for y, x in zip(red_pixels[0], red_pixels[1]):
-            img_no_dot.putpixel((x, y), (0, 0, 0, 0))  # Make the red dot transparent
-            
+        # Remove the red dot and expand removal by 1px to ensure full removal
+        for y in range(max(0, min(red_pixels[0]) - 1), min(img.height, max(red_pixels[0]) + 2)):
+            for x in range(max(0, min(red_pixels[1]) - 1), min(img.width, max(red_pixels[1]) + 2)):
+                # Check if this pixel or a neighboring pixel is red
+                if ((abs(y - y_center) <= 5) and (abs(x - x_center) <= 5)):
+                    img_no_dot.putpixel((x, y), (0, 0, 0, 0))  # Make the red dot transparent
+        
         return (x_center, y_center), img_no_dot
     
     # If no red dot found, assume center of image
-    return (img.width // 2, img.height // 2), img
+    return (img.width // 2, img.height // 2), img_no_dot
 
 # Authentication decorator for protected routes
 def requires_auth(f):
@@ -170,11 +175,18 @@ def process_image():
         # Paste overlay image at calculated position
         result.paste(overlay_image, (x_offset, y_offset), overlay_image)
         
-        # Save result as WebP
+        # Save result as JPG
         timestamp = int(time.time())
-        result_filename = f"result_{timestamp}.webp"
+        result_filename = f"result_{timestamp}.jpg"
         result_path = os.path.join(app.config['RESULT_FOLDER'], result_filename)
-        result.save(result_path, format='WEBP', quality=COMPRESSION_QUALITY)
+        
+        # Convert to RGB for JPG (which doesn't support alpha)
+        if result.mode == 'RGBA':
+            rgb_result = Image.new('RGB', result.size, (255, 255, 255))
+            rgb_result.paste(result, mask=result.split()[3])
+            rgb_result.save(result_path, format='JPEG', quality=COMPRESSION_QUALITY)
+        else:
+            result.save(result_path, format='JPEG', quality=COMPRESSION_QUALITY)
         
         # Return paths to the frontend
         return jsonify({
