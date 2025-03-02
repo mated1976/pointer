@@ -60,7 +60,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(img, 0, 0, width, height);
                     
-                    // Get resized image data
+                    // Get resized image data - format is now kept as is,
+                    // server will handle conversion to WebP
                     currentImage = canvas.toDataURL('image/jpeg', 0.9);
                 }
                 
@@ -180,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Create an anchor element and trigger download
         const link = document.createElement('a');
         link.href = previewImage.src;
-        link.download = 'pointing-hand-' + new Date().getTime() + '.png';
+        link.download = 'pointing-hand-' + new Date().getTime() + '.webp';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -190,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fetch(previewImage.src)
                 .then(res => res.blob())
                 .then(blob => {
-                    const file = new File([blob], 'pointing-hand.png', { type: 'image/png' });
+                    const file = new File([blob], 'pointing-hand.webp', { type: 'image/webp' });
                     navigator.share({
                         title: 'My Pointing Hand Image',
                         files: [file]
