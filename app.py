@@ -31,6 +31,9 @@ db_config = {
 STATS_USERNAME = os.environ.get('STATS_USERNAME', 'admin')
 STATS_PASSWORD = os.environ.get('STATS_PASSWORD', '')
 
+# Image compression quality (75%)
+COMPRESSION_QUALITY = 75
+
 # Validate configuration
 if not all([db_config['user'], db_config['password']]):
     print("WARNING: Database credentials not set in environment variables.")
@@ -46,9 +49,9 @@ data_collector = MySQLDataCollector(db_config)
 for folder in [app.config['UPLOAD_FOLDER'], app.config['RESULT_FOLDER']]:
     os.makedirs(folder, exist_ok=True)
 
-# Define left and right hand images
-LEFT_HANDS = ['l-01.png', 'l-02.png']
-RIGHT_HANDS = ['r-01.png', 'r-02.png', 'r-03.png']
+# Define left and right hand images - updated to include 5 of each
+LEFT_HANDS = ['l-01.webp', 'l-02.webp', 'l-03.webp', 'l-04.webp', 'l-05.webp']
+RIGHT_HANDS = ['r-01.webp', 'r-02.webp', 'r-03.webp', 'r-04.webp', 'r-05.webp']
 
 def detect_red_dot(image_path):
     """Detect the center of the red dot in overlay images"""
@@ -122,6 +125,19 @@ def process_image():
         image_bytes = base64.b64decode(image_data)
         base_image = Image.open(io.BytesIO(image_bytes)).convert('RGBA')
         
+        # Compress the base image
+        compressed_image = io.BytesIO()
+        if base_image.mode == 'RGBA':
+            # Convert to RGB for better WebP compression
+            rgb_image = Image.new('RGB', base_image.size, (255, 255, 255))
+            rgb_image.paste(base_image, mask=base_image.split()[3])  # Use alpha as mask
+            rgb_image.save(compressed_image, format='WEBP', quality=COMPRESSION_QUALITY)
+        else:
+            base_image.save(compressed_image, format='WEBP', quality=COMPRESSION_QUALITY)
+        
+        compressed_image.seek(0)
+        base_image = Image.open(compressed_image).convert('RGBA')
+        
         # Get click position
         click_x = int(data['x'])
         click_y = int(data['y'])
@@ -154,11 +170,11 @@ def process_image():
         # Paste overlay image at calculated position
         result.paste(overlay_image, (x_offset, y_offset), overlay_image)
         
-        # Save result
+        # Save result as WebP
         timestamp = int(time.time())
-        result_filename = f"result_{timestamp}.png"
+        result_filename = f"result_{timestamp}.webp"
         result_path = os.path.join(app.config['RESULT_FOLDER'], result_filename)
-        result.save(result_path)
+        result.save(result_path, format='WEBP', quality=COMPRESSION_QUALITY)
         
         # Return paths to the frontend
         return jsonify({
