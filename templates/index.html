@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pointing App</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Pointing App</h1>
+        
+        <div class="controls">
+            <!-- Gallery picker -->
+            <input type="file" id="imageUpload" accept="image/*">
+            <label for="imageUpload" class="button">Choose from Gallery</label>
+            
+            <!-- Camera picker -->
+            <input type="file" id="cameraUpload" accept="image/*" capture="environment">
+            <label for="cameraUpload" class="button">Take Photo</label>
+        </div>
+        
+        <div class="action-buttons hidden" id="actionButtons">
+            <button id="tryDifferent">Try Different Hand</button>
+            <button id="saveImage">Save Image</button>
+            <button id="newImage">New Image</button>
+        </div>
+        
+        <div id="imageContainer" class="hidden">
+            <div class="image-wrapper">
+                <img id="previewImage" src="#" alt="Preview">
+                <canvas id="overlayCanvas" class="hidden"></canvas>
+            </div>
+            
+            <div class="instruction" id="instruction">
+                Tap anywhere on the image to add a pointing hand
+            </div>
+        </div>
+        
+        <div id="resultContainer" class="hidden">
+            <img id="resultImage" src="#" alt="Result">
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
