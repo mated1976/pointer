@@ -50,17 +50,19 @@ data_collector = MySQLDataCollector(db_config)
 for folder in [app.config['UPLOAD_FOLDER'], app.config['RESULT_FOLDER']]:
     os.makedirs(folder, exist_ok=True)
 
-# Dynamic overlay image loading function
 def load_overlay_images():
     """Dynamically load all overlay images from the overlay folder"""
-    overlay_path = os.path.join(app.config['OVERLAY_FOLDER'], '*.webp')
-    image_files = glob.glob(overlay_path)
+    overlay_dir = app.config['OVERLAY_FOLDER']
     
-    # Sort files by name to ensure consistent ordering
-    image_files.sort()
-    
-    # Extract just the filenames
-    return [os.path.basename(f) for f in image_files]
+    # Use direct directory listing instead of glob
+    try:
+        all_files = [f for f in os.listdir(overlay_dir) if f.lower().endswith('.webp')]
+        all_files.sort()  # Sort to ensure consistent ordering
+        print(f"Found overlay images: {all_files}")
+        return all_files
+    except Exception as e:
+        print(f"Error loading overlay images: {str(e)}")
+        return []
 
 # Initialize the overlay images when the app starts
 HAND_IMAGES = []
