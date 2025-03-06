@@ -5,4 +5,5 @@ numpy==1.24.2
 python-dotenv==1.0.0
 mysqlclient==2.1.1
 pymysql==1.0.3
+mysql-connector-python==8.0.32
 gunicorn==20.1.0
