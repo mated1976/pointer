@@ -1,206 +1,235 @@
-// Global variables
-let currentImage = null;
-let handIndex = 0;
-let resultUrl = null;
-
-// DOM Elements
-const imageUpload = document.getElementById('imageUpload');
-const cameraUpload = document.getElementById('cameraUpload');
-const previewImage = document.getElementById('previewImage');
-const imageContainer = document.getElementById('imageContainer');
-const resultContainer = document.getElementById('resultContainer');
-const actionButtons = document.getElementById('actionButtons');
-const resultImage = document.getElementById('resultImage');
-const instruction = document.getElementById('instruction');
-const tryDifferentBtn = document.getElementById('tryDifferent');
-const saveImageBtn = document.getElementById('saveImage');
-const newImageBtn = document.getElementById('newImage');
-const overlayCanvas = document.getElementById('overlayCanvas');
-
-// Setup event listeners
-imageUpload.addEventListener('change', handleImageSelect);
-cameraUpload.addEventListener('change', handleImageSelect);
-previewImage.addEventListener('click', handleImageClick);
-tryDifferentBtn.addEventListener('click', tryDifferentHand);
-saveImageBtn.addEventListener('click', saveResultImage);
-newImageBtn.addEventListener('click', resetApp);
-
-// Log usage event to server
-function logEvent(event, details = {}) {
-    fetch('/log-event', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            event: event,
-            details: details
-        })
-    }).catch(error => console.error('Error logging event:', error));
-}
-
-// Handle image selection from gallery or camera
-function handleImageSelect(e) {
-    const file = e.target.files[0];
-    if (file) {
+document.addEventListener('DOMContentLoaded', () => {
+    // Elements
+    const imageUpload = document.getElementById('imageUpload');
+    const cameraUpload = document.getElementById('cameraUpload');
+    const previewImage = document.getElementById('previewImage');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const imageContainer = document.getElementById('imageContainer');
+    const resultContainer = document.getElementById('resultContainer');
+    const resultImage = document.getElementById('resultImage');
+    const controlsContainer = document.querySelector('.controls');
+    const actionButtons = document.getElementById('actionButtons');
+    const instruction = document.getElementById('instruction');
+    const tryDifferentBtn = document.getElementById('tryDifferent');
+    const saveImageBtn = document.getElementById('saveImage');
+    const newImageBtn = document.getElementById('newImage');
+    
+    // Variables
+    let currentImage = null;
+    let lastClickX = 0;
+    let lastClickY = 0;
+    let currentHandIndex = 0;  // Changed from currentOverlayIndex
+    let firstClickDone = false;
+    
+    // Event listeners
+    imageUpload.addEventListener('change', handleImageUpload);
+    if (cameraUpload) {
+        cameraUpload.addEventListener('change', handleImageUpload);
+    }
+    previewImage.addEventListener('click', handleImageClick);
+    tryDifferentBtn.addEventListener('click', tryDifferentHand);  // Changed from tryDifferentOverlay
+    saveImageBtn.addEventListener('click', saveImage);
+    newImageBtn.addEventListener('click', resetApp);
+    
+    // Handle image upload or capture
+    function handleImageUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
         const reader = new FileReader();
-        reader.onload = function(event) {
+        reader.onload = (event) => {
             currentImage = event.target.result;
-            previewImage.src = currentImage;
-            showImageContainer();
-            // Log image selection
-            logEvent('image_selected', {
-                source: e.target.id === 'imageUpload' ? 'gallery' : 'camera',
-                imageType: file.type
-            });
+            
+            // Resize image if too large
+            const img = new Image();
+            img.onload = function() {
+                const maxWidth = 1080;
+                let width = img.width;
+                let height = img.height;
+                
+                // Resize if width is greater than maxWidth
+                if (width > maxWidth) {
+                    const ratio = maxWidth / width;
+                    width = maxWidth;
+                    height = height * ratio;
+                    
+                    // Create canvas to resize
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Get resized image data
+                    currentImage = canvas.toDataURL('image/jpeg', 0.9);
+                }
+                
+                // Set the preview image
+                previewImage.src = currentImage;
+                
+                // Show image container and hide result
+                imageContainer.classList.remove('hidden');
+                resultContainer.classList.add('hidden');
+                
+                // Hide upload controls
+                controlsContainer.classList.add('hidden');
+                
+                // Show action buttons at top
+                actionButtons.classList.remove('hidden');
+                document.querySelector('.container').insertBefore(actionButtons, imageContainer);
+                
+                instruction.classList.remove('hidden');
+                
+                // Reset first click flag
+                firstClickDone = false;
+                
+                // Reset hand index
+                currentHandIndex = 0;  // Changed from currentOverlayIndex
+            };
+            img.src = event.target.result;
         };
         reader.readAsDataURL(file);
     }
-}
-
-// Show the image container and hide result
-function showImageContainer() {
-    imageContainer.classList.remove('hidden');
-    resultContainer.classList.add('hidden');
-    instruction.classList.remove('hidden');
-    actionButtons.classList.add('hidden');
-}
-
-// Handle click on the image
-function handleImageClick(e) {
-    if (!currentImage) return;
     
-    // Calculate click position relative to the image
-    const rect = previewImage.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // Handle click on the image
+    function handleImageClick(e) {
+        // Get click coordinates relative to the image
+        const rect = previewImage.getBoundingClientRect();
+        const scale = previewImage.naturalWidth / rect.width;
+        
+        lastClickX = Math.round((e.clientX - rect.left) * scale);
+        lastClickY = Math.round((e.clientY - rect.top) * scale);
+        
+        // Process the image with overlay
+        processImage(lastClickX, lastClickY, currentHandIndex);
+    }
     
-    // Log the click position for debugging
-    console.log(`Click at x: ${x}, y: ${y}, handIndex: ${handIndex}`);
+    // Try a different hand for the same click position
+    function tryDifferentHand() {  // Changed from tryDifferentOverlay
+        // Increment hand index and reprocess
+        currentHandIndex++;  // Changed from currentOverlayIndex
+        processImage(lastClickX, lastClickY, currentHandIndex);
+    }
     
-    // Process the image with current hand index
-    processImage(x, y, handIndex);
-    
-    // Log the click event
-    logEvent('image_clicked', {
-        x: Math.round(x),
-        y: Math.round(y),
-        imageWidth: previewImage.width,
-        imageHeight: previewImage.height,
-        handIndex: handIndex
-    });
-}
-
-// Send image to server for processing
-function processImage(x, y, currentHandIndex) {
-    // Show loading state
-    document.body.classList.add('loading');
-    
-    // Logging for debugging
-    console.log(`Processing image with handIndex: ${currentHandIndex}`);
-    
-    fetch('/process', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            image: currentImage,
-            x: x,
-            y: y,
-            handIndex: currentHandIndex
+    // Process the image on the server
+    function processImage(x, y, handIndex) {  // Changed parameter name
+        // Show loading state
+        previewImage.style.opacity = '0.5';
+        instruction.textContent = 'Processing...';
+        
+        fetch('/process', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                image: currentImage,
+                x: x,
+                y: y,
+                handIndex: handIndex,  // Changed from overlayIndex
+                flip: x < previewImage.naturalWidth / 2  // Add flip parameter
+            }),
         })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.error) {
-            alert('Error: ' + data.error);
-            return;
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            // Display the result
+            previewImage.src = data.result + '?t=' + new Date().getTime(); // Cache busting
+            
+            // Update hand index for next try
+            currentHandIndex = data.nextHandIndex;  // Changed from nextOverlayIndex
+            
+            // Reset opacity and instruction
+            previewImage.style.opacity = '1';
+            instruction.textContent = 'Tap anywhere on the image to add a pointing hand';
+        })
+        .catch(error => {
+            console.error('Error processing image:', error);
+            instruction.textContent = 'Error processing image. Please try again.';
+            instruction.style.color = 'red';
+            previewImage.style.opacity = '1';
+            
+            // Reset after 3 seconds
+            setTimeout(() => {
+                instruction.textContent = 'Tap anywhere on the image to add a pointing hand';
+                instruction.style.color = '';
+            }, 3000);
+        });
+    }
+    
+    // Save the processed image
+    function saveImage() {
+        // Log save event
+        fetch('/log-event', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                event: 'save_image',
+                details: { 
+                    screen_width: window.innerWidth,
+                    screen_height: window.innerHeight
+                }
+            }),
+        }).catch(console.error);
+        
+        // Create an anchor element and trigger download
+        const link = document.createElement('a');
+        link.href = previewImage.src;
+        link.download = 'pointing-hand-' + new Date().getTime() + '.webp';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Check if on mobile and offer share option
+        if (navigator.share) {
+            fetch(previewImage.src)
+                .then(res => res.blob())
+                .then(blob => {
+                    const file = new File([blob], 'pointing-hand.webp', { type: 'image/webp' });
+                    navigator.share({
+                        title: 'My Pointing Hand Image',
+                        files: [file]
+                    })
+                    .then(() => {
+                        // Log share event
+                        fetch('/log-event', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                event: 'share_image',
+                                details: { method: 'web_share_api' }
+                            }),
+                        }).catch(console.error);
+                    })
+                    .catch(console.error);
+                });
+        }
+    }
+    
+    // Reset the app for a new image
+    function resetApp() {
+        // Hide image and action buttons
+        imageContainer.classList.add('hidden');
+        actionButtons.classList.add('hidden');
+        
+        // Show controls for uploading a new image
+        controlsContainer.classList.remove('hidden');
+        
+        // Reset input fields
+        imageUpload.value = '';
+        if (cameraUpload) {
+            cameraUpload.value = '';
         }
         
-        // Update the hand index for next time
-        handIndex = data.nextHandIndex;
-        console.log(`New handIndex received: ${handIndex}`);
-        
-        // Show the result
-        resultUrl = data.result;
-        resultImage.src = resultUrl + '?t=' + new Date().getTime(); // Force reload
-        
-        // Show result container and buttons
-        resultContainer.classList.remove('hidden');
-        imageContainer.classList.add('hidden');
-        actionButtons.classList.remove('hidden');
-        
-        // Log success
-        logEvent('image_processed', {
-            success: true,
-            handIndex: currentHandIndex,
-            nextHandIndex: handIndex
-        });
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error processing image. Please try again.');
-        
-        // Log error
-        logEvent('process_error', {
-            error: error.toString()
-        });
-    })
-    .finally(() => {
-        // Hide loading state
-        document.body.classList.remove('loading');
-    });
-}
-
-// Try a different hand overlay
-function tryDifferentHand() {
-    // Make sure we have the current image
-    if (!currentImage) return;
-    
-    // Reset to image selection view
-    showImageContainer();
-    
-    // Increment hand index (handled by the server response now)
-    console.log(`Using handIndex: ${handIndex} for try different`);
-    
-    // Log the event
-    logEvent('try_different_hand', {
-        currentHandIndex: handIndex
-    });
-}
-
-// Save the result image
-function saveResultImage() {
-    if (!resultUrl) return;
-    
-    // Create a temporary link to download the image
-    const link = document.createElement('a');
-    link.href = resultUrl;
-    link.download = 'pointing_' + new Date().getTime() + '.jpg';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // Log save event
-    logEvent('image_saved');
-}
-
-// Reset the app to initial state
-function resetApp() {
-    currentImage = null;
-    handIndex = 0; // Reset hand index
-    resultUrl = null;
-    
-    // Reset file inputs
-    imageUpload.value = '';
-    cameraUpload.value = '';
-    
-    // Hide containers
-    imageContainer.classList.add('hidden');
-    resultContainer.classList.add('hidden');
-    actionButtons.classList.add('hidden');
-    
-    // Log reset event
-    logEvent('app_reset');
-}
+        // Reset state variables
+        currentHandIndex = 0;  // Changed from currentOverlayIndex
+        firstClickDone = false;
+    }
+});
