@@ -8,6 +8,7 @@ import time
 import functools
 from dotenv import load_dotenv
 from mysql_data_collector import MySQLDataCollector
+import glob
 
 # Load environment variables
 load_dotenv()
@@ -31,8 +32,8 @@ db_config = {
 STATS_USERNAME = os.environ.get('STATS_USERNAME', 'admin')
 STATS_PASSWORD = os.environ.get('STATS_PASSWORD', '')
 
-# Image compression quality (75%)
-COMPRESSION_QUALITY = 75
+# Image compression quality (80%)
+COMPRESSION_QUALITY = 80
 
 # Validate configuration
 if not all([db_config['user'], db_config['password']]):
@@ -49,41 +50,66 @@ data_collector = MySQLDataCollector(db_config)
 for folder in [app.config['UPLOAD_FOLDER'], app.config['RESULT_FOLDER']]:
     os.makedirs(folder, exist_ok=True)
 
-# Define left and right hand images - updated to include 5 of each
-LEFT_HANDS = ['l-01.webp', 'l-02.webp', 'l-03.webp', 'l-04.webp', 'l-05.webp']
-RIGHT_HANDS = ['r-01.webp', 'r-02.webp', 'r-03.webp', 'r-04.webp', 'r-05.webp']
+# Dynamic overlay image loading function
+def load_overlay_images():
+    """Dynamically load all overlay images from the overlay folder"""
+    overlay_path = os.path.join(app.config['OVERLAY_FOLDER'], '*.webp')
+    image_files = glob.glob(overlay_path)
+    
+    # Sort files by name to ensure consistent ordering
+    image_files.sort()
+    
+    # Extract just the filenames
+    return [os.path.basename(f) for f in image_files]
 
-def detect_red_dot(image_path):
-    """Detect the center of the red dot in overlay images and remove it completely"""
-    img = Image.open(image_path).convert('RGBA')
-    img_array = np.array(img)
+# Initialize the overlay images when the app starts
+HAND_IMAGES = []
+
+# Load the images during initialization
+def initialize_overlay_images():
+    global HAND_IMAGES
+    HAND_IMAGES = load_overlay_images()
+    if not HAND_IMAGES:
+        print("WARNING: No overlay images found in", app.config['OVERLAY_FOLDER'])
+
+# Call this function after directories are created
+initialize_overlay_images()
+
+# Lighting adjustment parameters
+# Baseline represents the "normal" lighting conditions the overlays were photographed in
+# Higher values make overlays less responsive to background lighting
+LIGHTING_BASELINE = 0.97  # Value between 0.0 and 1.0
+LIGHTING_SENSITIVITY = 1.0  # How strongly to adjust (1.0 = normal, higher = more dramatic)
+
+def adjust_overlay_to_match_lighting(base_image, overlay_image, click_x, click_y):
+    """Adjust overlay brightness to match the base image lighting in the area of placement"""
+    # Sample area where overlay will be placed
+    sample_size = 500  # pixels around click point
+    x1 = max(0, click_x - sample_size//2)
+    y1 = max(0, click_y - sample_size//2)
+    x2 = min(base_image.width, click_x + sample_size//2)
+    y2 = min(base_image.height, click_y + sample_size//2)
     
-    # Look for bright red pixels (the dot is 7px)
-    red_pixels = np.where(
-        (img_array[:, :, 0] > 240) &  # High red
-        (img_array[:, :, 1] < 30) &   # Low green
-        (img_array[:, :, 2] < 30)     # Low blue
-    )
+    # Calculate average brightness in sample area
+    sample = base_image.crop((x1, y1, x2, y2))
+    sample_array = np.array(sample.convert('L'))
+    avg_brightness = np.mean(sample_array) / 255.0  # 0.0 to 1.0
     
-    # Create a copy without the red dot
-    img_no_dot = img.copy()
+    # Create brightness adjusted overlay
+    overlay_array = np.array(overlay_image)
     
-    if len(red_pixels[0]) > 0:
-        # Find center of the red dot
-        y_center = int(np.mean(red_pixels[0]))
-        x_center = int(np.mean(red_pixels[1]))
-        
-        # Remove the red dot and expand removal by 1px to ensure full removal
-        for y in range(max(0, min(red_pixels[0]) - 1), min(img.height, max(red_pixels[0]) + 2)):
-            for x in range(max(0, min(red_pixels[1]) - 1), min(img.width, max(red_pixels[1]) + 2)):
-                # Check if this pixel or a neighboring pixel is red
-                if ((abs(y - y_center) <= 5) and (abs(x - x_center) <= 5)):
-                    img_no_dot.putpixel((x, y), (0, 0, 0, 0))  # Make the red dot transparent
-        
-        return (x_center, y_center), img_no_dot
+    # Skip transparent pixels (alpha == 0)
+    mask = overlay_array[:,:,3] > 0
     
-    # If no red dot found, assume center of image
-    return (img.width // 2, img.height // 2), img_no_dot
+    # Calculate brightness factor from baseline
+    brightness_factor = LIGHTING_BASELINE + ((avg_brightness - 0.5) * LIGHTING_SENSITIVITY)
+    brightness_factor = max(0.3, min(1.7, brightness_factor))  # Clamp to reasonable range
+    
+    # Apply brightness adjustment to RGB channels
+    overlay_array[mask, 0:3] = np.clip(overlay_array[mask, 0:3] * brightness_factor, 0, 255).astype(np.uint8)
+    
+    # Return adjusted overlay
+    return Image.fromarray(overlay_array)
 
 # Authentication decorator for protected routes
 def requires_auth(f):
@@ -118,7 +144,8 @@ def process_image():
         data_collector.log_usage('process_image', {
             'click_x': data.get('x'),
             'click_y': data.get('y'),
-            'overlay_index': data.get('overlayIndex', 0)
+            'hand_index': data.get('handIndex', 0),
+            'flip': data.get('flip', False)
         })
         
         # Get the base image from the data URL
@@ -136,9 +163,9 @@ def process_image():
             # Convert to RGB for better WebP compression
             rgb_image = Image.new('RGB', base_image.size, (255, 255, 255))
             rgb_image.paste(base_image, mask=base_image.split()[3])  # Use alpha as mask
-            rgb_image.save(compressed_image, format='WEBP', quality=COMPRESSION_QUALITY)
+            rgb_image.save(compressed_image, format='JPEG', quality=COMPRESSION_QUALITY)
         else:
-            base_image.save(compressed_image, format='WEBP', quality=COMPRESSION_QUALITY)
+            base_image.save(compressed_image, format='JPEG', quality=COMPRESSION_QUALITY)
         
         compressed_image.seek(0)
         base_image = Image.open(compressed_image).convert('RGBA')
@@ -147,24 +174,33 @@ def process_image():
         click_x = int(data['x'])
         click_y = int(data['y'])
         
-        # Determine which hand to use based on click position
-        is_left_side = click_x < base_image.width / 2
-        overlay_files = LEFT_HANDS if is_left_side else RIGHT_HANDS
+        # Determine if we should flip the image (if click is on right side)
+        should_flip = click_x > base_image.width / 2
         
-        # Get the current overlay index or start with 0
-        overlay_index = int(data.get('overlayIndex', 0)) % len(overlay_files)
-        overlay_file = overlay_files[overlay_index]
+        # Get the hand overlay index or start with 0
+        hand_index = int(data.get('handIndex', 0)) % len(HAND_IMAGES)
+        overlay_file = HAND_IMAGES[hand_index]
         
-        # Get overlay image and find the red dot position
+        # Get overlay image
         overlay_path = os.path.join(app.config['OVERLAY_FOLDER'], overlay_file)
         if not os.path.exists(overlay_path):
             return jsonify({'error': f'Overlay image not found: {overlay_file}'}), 404
             
-        (dot_x, dot_y), overlay_image = detect_red_dot(overlay_path)
+        overlay_image = Image.open(overlay_path).convert('RGBA')
         
-        # Calculate position to place overlay (centering the dot on click position)
-        x_offset = click_x - dot_x
-        y_offset = click_y - dot_y
+        # Flip the image if needed
+        if should_flip:
+            overlay_image = overlay_image.transpose(Image.FLIP_LEFT_RIGHT)
+        
+        # Calculate position to place overlay based on which side was clicked
+        if should_flip:  # Right side click
+            # Use direct placement at click position
+            x_offset = click_x
+            y_offset = click_y
+        else:  # Left side click
+            # Use top right corner of overlay for alignment
+            x_offset = click_x - overlay_image.width
+            y_offset = click_y
         
         # Create a new transparent image of the same size as base image
         result = Image.new('RGBA', base_image.size, (0, 0, 0, 0))
@@ -172,8 +208,11 @@ def process_image():
         # Paste base image
         result.paste(base_image, (0, 0))
         
-        # Paste overlay image at calculated position
-        result.paste(overlay_image, (x_offset, y_offset), overlay_image)
+        # Adjust overlay lighting to match background
+        adjusted_overlay = adjust_overlay_to_match_lighting(base_image, overlay_image, click_x, click_y)
+        
+        # Paste adjusted overlay image at calculated position
+        result.paste(adjusted_overlay, (x_offset, y_offset), adjusted_overlay)
         
         # Save result as JPG
         timestamp = int(time.time())
@@ -191,7 +230,7 @@ def process_image():
         # Return paths to the frontend
         return jsonify({
             'result': url_for('static', filename=f'results/{result_filename}'),
-            'nextOverlayIndex': (overlay_index + 1) % len(overlay_files)
+            'nextHandIndex': (hand_index + 1) % len(HAND_IMAGES)
         })
     except Exception as e:
         # Log the error
